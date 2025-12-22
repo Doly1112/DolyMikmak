@@ -37,13 +37,15 @@ app.use(
 // Create table if not exists
 async function initDb() {
     await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+  CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL,
+    username_lc TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
 }
 initDb().catch((e) => console.error("DB init error:", e));
 
@@ -91,10 +93,13 @@ app.post("/register", async (req, res) => {
         const passwordHash = await bcrypt.hash(password, 10);
 
         // insert user
+        const usernameLc = username.toLowerCase();
+
         await pool.query(
-            `INSERT INTO users (username, password_hash) VALUES ($1, $2)`,
-            [username, passwordHash]
+            `INSERT INTO users (username, username_lc, password_hash) VALUES ($1, $2, $3)`,
+            [username, usernameLc, passwordHash]
         );
+
 
         res.send("Account created. <a href='/login'>Go to login</a>");
     } catch (err) {
@@ -124,10 +129,13 @@ app.post("/login", async (req, res) => {
         const username = (req.body.username || "").trim();
         const password = req.body.password || "";
 
+        const usernameLc = username.toLowerCase();
+
         const result = await pool.query(
-            `SELECT username, password_hash FROM users WHERE LOWER(username)=LOWER($1) LIMIT 1`,
-            [username]
+            `SELECT username, password_hash FROM users WHERE username_lc=$1 LIMIT 1`,
+            [usernameLc]
         );
+
 
         if (result.rowCount === 0) return res.send("Wrong login. <a href='/login'>Try again</a>");
 
