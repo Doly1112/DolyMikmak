@@ -1,33 +1,37 @@
 const express = require("express");
 const session = require("express-session");
 const bcrypt = require("bcrypt");
-const fs = require("fs");
-const path = require("path");
+const { Pool } = require("pg");
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 
 app.use(
     session({
-        secret: "mySuperSecretKey",
+        secret: process.env.SESSION_SECRET || "mySuperSecretKey",
         resave: false,
         saveUninitialized: false,
     })
 );
 
-const USERS_FILE = path.join(__dirname, "users.json");
+// Postgres connection
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+});
 
-function loadUsers() {
-    try {
-        return JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
-    } catch {
-        return [];
-    }
+// Create table if not exists
+async function initDb() {
+    await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 }
-
-function saveUsers(users) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), "utf8");
-}
+initDb().catch((e) => console.error("DB init error:", e));
 
 function requireLogin(req, res, next) {
     if (req.session && req.session.user) return next();
@@ -63,21 +67,30 @@ app.get("/register", (req, res) => {
 });
 
 app.post("/register", async (req, res) => {
-    const username = (req.body.username || "").trim();
-    const password = req.body.password || "";
+    try {
+        const username = (req.body.username || "").trim();
+        const password = req.body.password || "";
 
-    if (username.length < 3) return res.send("Username too short (min 3).");
-    if (password.length < 4) return res.send("Password too short (min 4).");
+        if (username.length < 3) return res.send("Username too short (min 3).");
+        if (password.length < 4) return res.send("Password too short (min 4).");
 
-    const users = loadUsers();
-    const exists = users.some((u) => u.username.toLowerCase() === username.toLowerCase());
-    if (exists) return res.send("User already exists. <a href='/register'>Back</a>");
+        const passwordHash = await bcrypt.hash(password, 10);
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    users.push({ username, passwordHash });
-    saveUsers(users);
+        // insert user
+        await pool.query(
+            `INSERT INTO users (username, password_hash) VALUES ($1, $2)`,
+            [username, passwordHash]
+        );
 
-    res.send("Account created. <a href='/login'>Go to login</a>");
+        res.send("Account created. <a href='/login'>Go to login</a>");
+    } catch (err) {
+        // unique violation
+        if (err && err.code === "23505") {
+            return res.send("User already exists. <a href='/register'>Back</a>");
+        }
+        console.error(err);
+        res.status(500).send("Server error");
+    }
 });
 
 app.get("/login", (req, res) => {
@@ -93,18 +106,27 @@ app.get("/login", (req, res) => {
 });
 
 app.post("/login", async (req, res) => {
-    const username = (req.body.username || "").trim();
-    const password = req.body.password || "";
+    try {
+        const username = (req.body.username || "").trim();
+        const password = req.body.password || "";
 
-    const users = loadUsers();
-    const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-    if (!user) return res.send("Wrong login. <a href='/login'>Try again</a>");
+        const result = await pool.query(
+            `SELECT username, password_hash FROM users WHERE LOWER(username)=LOWER($1) LIMIT 1`,
+            [username]
+        );
 
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) return res.send("Wrong login. <a href='/login'>Try again</a>");
+        if (result.rowCount === 0) return res.send("Wrong login. <a href='/login'>Try again</a>");
 
-    req.session.user = { username: user.username };
-    res.redirect("/dashboard");
+        const user = result.rows[0];
+        const ok = await bcrypt.compare(password, user.password_hash);
+        if (!ok) return res.send("Wrong login. <a href='/login'>Try again</a>");
+
+        req.session.user = { username: user.username };
+        res.redirect("/dashboard");
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Server error");
+    }
 });
 
 app.get("/dashboard", requireLogin, (req, res) => {
@@ -123,7 +145,6 @@ app.get("/me", requireLogin, (req, res) => {
   `);
 });
 
-
 app.get("/logout", (req, res) => {
     req.session.destroy(() => res.redirect("/"));
 });
@@ -132,5 +153,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Running on http://localhost:${PORT}`);
 });
-
-
