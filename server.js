@@ -2,23 +2,37 @@ const express = require("express");
 const session = require("express-session");
 const bcrypt = require("bcrypt");
 const { Pool } = require("pg");
+const pgSession = require("connect-pg-simple")(session);
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 
-app.use(
-    session({
-        secret: process.env.SESSION_SECRET || "mySuperSecretKey",
-        resave: false,
-        saveUninitialized: false,
-    })
-);
-
-// Postgres connection
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
 });
+
+app.set("trust proxy", 1);
+
+app.use(
+    session({
+        store: new pgSession({
+            pool,
+            tableName: "session",
+            createTableIfMissing: true,
+        }),
+        secret: process.env.SESSION_SECRET || "mySuperSecretKey",
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            httpOnly: true,
+            maxAge: 1000 * 60 * 60 * 24 * 7,
+        },
+    })
+);
+
 
 // Create table if not exists
 async function initDb() {
