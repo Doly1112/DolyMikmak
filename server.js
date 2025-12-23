@@ -62,12 +62,15 @@ function toastHtml(toast) {
     return `
   <div id="toast" class="toast ${type}" dir="rtl">
     <div class="toast-row">
-      <div class="toast-icon">${type === "success" ? "✅" : "⚠️"}</div>
-      <div class="toast-text">
-        <div class="toast-title">${type === "success" ? "הצלחה" : "שגיאה"}</div>
-        <div class="toast-msg">${msg}</div>
-      </div>
-      <button class="toast-close" aria-label="סגור" onclick="this.parentElement.parentElement.remove()">×</button>
+  <div class="toast-icon">⚠️</div>
+  <div class="toast-text">
+    <div class="toast-title">שגיאה</div>
+    <div class="toast-msg">הטקסט שלך כאן</div>
+  </div>
+</div>
+
+<button class="toast-close">סגור ✕</button>
+
     </div>
     <div class="toast-bar"></div>
   </div>
@@ -207,7 +210,28 @@ function pageHtml(title, body, toast) {
       .toast.error{ border-right: 6px solid var(--danger); }
       .toast.success{ border-right: 6px solid #22c55e; }
 
-      .toast-row{ display:flex; gap:10px; align-items:flex-start; }
+      .toast-row{
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+}
+
+.toast-close{
+  margin-top: 10px;
+  width: 100%;
+  border: 0;
+  background: rgba(255,255,255,0.08);
+  color: #e5e7eb;
+  font-weight: 800;
+  padding: 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.toast-close:hover{
+  background: rgba(255,255,255,0.15);
+}
+
       .toast-icon{
         width: 36px; height: 36px;
         display:flex; align-items:center; justify-content:center;
@@ -219,16 +243,7 @@ function pageHtml(title, body, toast) {
       .toast-title{ font-weight: 900; margin-bottom: 4px; }
       .toast-msg{ color:#e5e7eb; line-height: 1.35; font-weight:700; }
 
-      .toast-close{
-        border: 0;
-        background: transparent;
-        font-size: 22px;
-        cursor: pointer;
-        line-height: 1;
-        opacity: 0.7;
-        color: #e5e7eb;
-        font-weight:900;
-      }
+      
       .toast-close:hover{ opacity: 1; }
 
       .toast-bar{
