@@ -203,22 +203,37 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       username TEXT NOT NULL,
-      username_lc TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
+    // Make sure columns exist even if table was created before
     await pool.query(`
     ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS email TEXT,
-    ADD COLUMN IF NOT EXISTS birth_date DATE;
+      ADD COLUMN IF NOT EXISTS username_lc TEXT,
+      ADD COLUMN IF NOT EXISTS email TEXT,
+      ADD COLUMN IF NOT EXISTS birth_date DATE;
   `);
 
+    // Backfill username_lc for existing rows
+    await pool.query(`
+    UPDATE users
+    SET username_lc = LOWER(username)
+    WHERE username_lc IS NULL;
+  `);
+
+    // Unique constraint/index for username_lc
+    await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_username_lc_unique ON users(username_lc);
+  `);
+
+    // Unique constraint/index for email (allows multiple NULLs, but you already cleaned old users)
     await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email);
   `);
 }
+
 
 initDb().catch((e) => console.error("DB init error:", e));
 
