@@ -1,8 +1,11 @@
 ﻿const express = require("express");
 const session = require("express-session");
 const bcrypt = require("bcrypt");
+const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const pgSession = require("connect-pg-simple")(session);
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase();
+
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -16,6 +19,7 @@ app.set("trust proxy", 1);
 
 app.use(
     session({
+
         store: new pgSession({
             pool,
             tableName: "session",
@@ -32,6 +36,10 @@ app.use(
         },
     })
 );
+const authLimiter = rateLimit({ windowMs: 60_000, max: 20, standardHeaders: true, legacyHeaders: false });
+const writeLimiter = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
+
+
 
 // ---------- Toast helpers ----------
 function setToast(req, type, message) {
@@ -58,22 +66,27 @@ function toastHtml(toast) {
 
     const type = toast.type === "success" ? "success" : "error";
     const msg = escapeHtml(String(toast.message || ""));
+    const title = type === "success" ? "הצלחה" : "שגיאה";
+    const icon = type === "success" ? "✅" : "⚠️";
 
     return `
   <div id="toast" class="toast ${type}" dir="rtl">
     <div class="toast-row">
-  <div class="toast-icon">⚠️</div>
-  <div class="toast-text">
-    <div class="toast-title">שגיאה</div>
-    <div class="toast-msg">הטקסט שלך כאן</div>
-  </div>
-</div>
-
-<button class="toast-close">סגור ✕</button>
-
+      <div class="toast-icon">${icon}</div>
+      <div class="toast-text">
+        <div class="toast-title">${title}</div>
+        <div class="toast-msg">${msg}</div>
+      </div>
     </div>
+
+    <button class="toast-close" type="button" aria-label="סגור"
+      onclick="document.getElementById('toast')?.remove()">
+      סגור ✕
+    </button>
+
     <div class="toast-bar"></div>
   </div>
+
   <script>
     (function(){
       const t = document.getElementById("toast");
@@ -85,6 +98,7 @@ function toastHtml(toast) {
   </script>
   `;
 }
+
 
 
 function pageHtml(title, body, toast) {
@@ -243,9 +257,7 @@ function pageHtml(title, body, toast) {
       .toast-title{ font-weight: 900; margin-bottom: 4px; }
       .toast-msg{ color:#e5e7eb; line-height: 1.35; font-weight:700; }
 
-      
-      .toast-close:hover{ opacity: 1; }
-
+     
       .toast-bar{
         height: 3px;
         margin-top: 10px;
@@ -265,6 +277,81 @@ function pageHtml(title, body, toast) {
       }
       .toast.error .toast-bar::after{ background: rgba(239,68,68,0.60); }
       @keyframes toastbar{ from { width:100%; } to { width:0%; } }
+      /* ---------- Tables ---------- */
+.table-wrap{
+  max-width: 980px;
+  overflow: auto;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.18);
+}
+
+.table{
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 820px;
+  font-weight: 700;
+}
+
+.table thead th{
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  text-align: right;
+  padding: 12px 12px;
+  background: rgba(15,23,42,0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+  color: rgba(229,231,235,0.95);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.table tbody td{
+  text-align: right;
+  padding: 12px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  color: rgba(229,231,235,0.92);
+  vertical-align: top;
+}
+
+.table tbody tr:hover td{
+  background: rgba(124,58,237,0.10);
+}
+
+.table tbody tr:nth-child(even) td{
+  background: rgba(255,255,255,0.03);
+}
+
+.table .mono{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.table .badge{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 900;
+  font-size: 12px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.22);
+}
+
+.badge.ok{
+  border-color: rgba(34,197,94,0.35);
+  background: rgba(34,197,94,0.12);
+}
+
+.badge.no{
+  border-color: rgba(239,68,68,0.35);
+  background: rgba(239,68,68,0.12);
+}
+
     </style>
   </head>
   <body>
@@ -295,6 +382,8 @@ async function initDb() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+    
+
 
     // Make sure columns exist even if table was created before
     await pool.query(`
@@ -320,6 +409,19 @@ async function initDb() {
     await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email);
   `);
+
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS posts (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts(created_at DESC);`);
+
+
 }
 
 
@@ -410,7 +512,7 @@ app.get("/register", (req, res) => {
 });
 
 
-app.post("/register", async (req, res) => {
+app.post("/register", authLimiter, async (req, res) => {
     try {
         const username = (req.body.username || "").trim();
         const email = (req.body.email || "").trim();
@@ -491,7 +593,7 @@ app.get("/login", (req, res) => {
 });
 
 
-app.post("/login", async (req, res) => {
+app.post("/login", authLimiter, async (req, res) => {
     try {
         const username = (req.body.username || "").trim();
         const password = req.body.password || "";
@@ -501,7 +603,7 @@ app.post("/login", async (req, res) => {
         const usernameLc = username.toLowerCase();
 
         const result = await pool.query(
-            `SELECT id, username, password_hash FROM users WHERE username_lc=$1 LIMIT 1`,
+            `SELECT id, username, email, password_hash FROM users WHERE username_lc=$1 LIMIT 1`,
             [usernameLc]
         );
 
@@ -518,15 +620,33 @@ app.post("/login", async (req, res) => {
         }
 
         req.session.formDraft = null;
-        req.session.user = { id: user.id, username: user.username };
+
+        req.session.user = {
+            id: user.id,
+            username: user.username,
+            isAdmin: (user.email || "").toLowerCase() === ADMIN_EMAIL,
+        };
+
+
         setToast(req, "success", "התחברת בהצלחה.");
         return res.redirect("/dashboard");
+
     } catch (err) {
         console.error(err);
         setToast(req, "error", "שגיאת שרת.");
         return res.redirect("/login");
     }
 });
+
+
+
+
+
+function requireAdmin(req, res, next) {
+    if (req.session?.user?.isAdmin) return next();
+    setToast(req, "error", "אין לך הרשאה.");
+    return res.redirect("/dashboard");
+}
 
 
 app.get("/dashboard", requireLogin, (req, res) => {
@@ -540,6 +660,7 @@ app.get("/dashboard", requireLogin, (req, res) => {
       <div class="card">
         <p>Welcome, <b>${escapeHtml(req.session.user.username)}</b></p>
         <p><a href="/me">My Account</a></p>
+        ${req.session.user.isAdmin ? `<p><a href="/admin">Admin Panel</a></p>` : ""}
         <p><a href="/logout">Logout</a></p>
       </div>
       `,
@@ -581,6 +702,224 @@ app.get("/logout", (req, res) => {
         res.redirect("/login");
     });
 });
+
+app.get("/admin/users", requireLogin, requireAdmin, async (req, res) => {
+    const toast = consumeToast(req);
+
+    const r = await pool.query(`
+    SELECT id, username, email, birth_date, created_at,
+           (password_hash IS NOT NULL AND length(password_hash) > 0) AS has_password
+    FROM users
+    ORDER BY id DESC
+    LIMIT 500
+  `);
+
+    const rows = r.rows
+        .map(u => `
+      <tr>
+        <td class="mono">${escapeHtml(String(u.id))}</td>
+
+        <td>${escapeHtml(u.username)}</td>
+        <td>${escapeHtml(u.email || "")}</td>
+        <td>${escapeHtml(u.birth_date ? String(u.birth_date) : "")}</td>
+        <td>${escapeHtml(String(u.created_at))}</td>
+        <td>${u.has_password
+                ? `<span class="badge ok">✅ כן</span>`
+                : `<span class="badge no">⚠️ לא</span>`}
+</td>
+
+      </tr>
+    `)
+        .join("");
+
+    res.send(
+        pageHtml(
+            "All Users",
+            `
+      <h1>כל המשתמשים</h1>
+      <div class="card" style="max-width: 980px;">
+  <div class="table-wrap">
+    <table class="table">
+
+          <thead>
+            <tr>
+              <th align="right">ID</th>
+              <th align="right">שם</th>
+              <th align="right">אימייל</th>
+              <th align="right">תאריך לידה</th>
+              <th align="right">נוצר</th>
+              <th align="right">יש סיסמה</th>
+            </tr>
+          </thead>
+          <tbody>${rows || "<tr><td colspan='6'>אין משתמשים</td></tr>"}</tbody>
+            </table>
+  </div>
+
+  <p style="margin-top:12px;"><a href="/admin">חזרה לאדמין</a></p>
+</div>
+
+      `,
+            toast
+        )
+    );
+});
+
+app.post("/admin/blog/new", writeLimiter, requireLogin, requireAdmin, async (req, res) => {
+
+    try {
+        const title = (req.body.title || "").trim();
+        const content = (req.body.content || "").trim();
+        if (title.length > 120) {
+            setToast(req, "error", "כותרת ארוכה מדי.");
+            return res.redirect("/admin/blog/new");
+        }
+        if (content.length > 20000) {
+            setToast(req, "error", "תוכן ארוך מדי.");
+            return res.redirect("/admin/blog/new");
+        }
+
+
+        if (title.length < 2) {
+            setToast(req, "error", "כותרת קצרה מדי.");
+            return res.redirect("/admin/blog/new");
+        }
+        if (content.length < 10) {
+            setToast(req, "error", "תוכן קצר מדי.");
+            return res.redirect("/admin/blog/new");
+        }
+
+        await pool.query(
+            `INSERT INTO posts (title, content, created_by) VALUES ($1, $2, $3)`,
+            [title, content, req.session.user.id]
+        );
+
+        setToast(req, "success", "הפוסט פורסם.");
+        return res.redirect("/blog");
+    } catch (e) {
+        console.error(e);
+        setToast(req, "error", "שגיאת שרת.");
+        return res.redirect("/admin/blog/new");
+    }
+});
+
+app.get("/admin/blog/new", requireLogin, requireAdmin, (req, res) => {
+    const toast = consumeToast(req);
+
+    res.send(
+        pageHtml(
+            "New Post",
+            `
+      <h1>יצירת פוסט</h1>
+      <div class="card" dir="rtl">
+        <form method="POST" action="/admin/blog/new">
+          <div class="row"><input name="title" placeholder="כותרת" required /></div>
+          <div class="row">
+            <textarea name="content" placeholder="תוכן הפוסט" required
+              style="width:100%; min-height:220px; padding:12px; border-radius:14px;
+              border:1px solid rgba(255,255,255,0.14); background: rgba(0,0,0,0.25);
+              color: var(--text); font-family:'Rubik', Arial, sans-serif;"></textarea>
+          </div>
+          <div class="row"><button type="submit">פרסם</button></div>
+        </form>
+        <p><a href="/admin">חזרה</a></p>
+      </div>
+      `,
+            toast
+        )
+    );
+});
+
+
+app.get("/blog", async (req, res) => {
+    const toast = consumeToast(req);
+
+    const r = await pool.query(`
+    SELECT p.id, p.title, p.created_at, u.username
+    FROM posts p
+    LEFT JOIN users u ON u.id = p.created_by
+    ORDER BY p.id DESC
+    LIMIT 50
+  `);
+
+    const items = r.rows.map(p => `
+    <div class="card" style="margin-bottom:12px;">
+      <h2 style="margin:0 0 8px 0;">${escapeHtml(p.title)}</h2>
+      <div class="hint">נכתב על ידי ${escapeHtml(p.username || "Unknown")} בתאריך ${escapeHtml(String(p.created_at))}</div>
+      <p style="margin-top:10px;"><a href="/blog/${p.id}">קרא עוד</a></p>
+    </div>
+  `).join("");
+
+    res.send(
+        pageHtml(
+            "Blog",
+            `
+      <h1>בלוג</h1>
+      ${items || `<div class="card">אין פוסטים עדיין</div>`}
+      `,
+            toast
+        )
+    );
+});
+
+app.get("/blog/:id", async (req, res) => {
+    const toast = consumeToast(req);
+
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).send("Bad id");
+
+    const r = await pool.query(`
+    SELECT p.id, p.title, p.content, p.created_at, u.username
+    FROM posts p
+    LEFT JOIN users u ON u.id = p.created_by
+    WHERE p.id=$1
+    LIMIT 1
+  `, [id]);
+
+    if (r.rowCount === 0) return res.status(404).send("Not found");
+
+    const p = r.rows[0];
+
+    res.send(
+        pageHtml(
+            p.title,
+            `
+      <h1>${escapeHtml(p.title)}</h1>
+      <div class="card" style="max-width: 860px;">
+        <div class="hint">נכתב על ידי ${escapeHtml(p.username || "Unknown")} בתאריך ${escapeHtml(String(p.created_at))}</div>
+        <p style="white-space:pre-wrap; line-height:1.6; font-weight:600;">
+          ${escapeHtml(p.content)}
+        </p>
+        <p><a href="/blog">חזרה לבלוג</a></p>
+      </div>
+      `,
+            toast
+        )
+    );
+});
+
+
+app.get("/admin", requireLogin, requireAdmin, (req, res) => {
+    const toast = consumeToast(req);
+
+    res.send(
+        pageHtml(
+            "Admin Panel",
+            `
+      <h1>מערכת מנהלים</h1>
+      <div class="card">
+        <p>שלום <b>${escapeHtml(req.session.user.username)}</b></p>
+        <div class="nav">
+          <a href="/admin/users">כל המשתמשים</a>
+          <a href="/admin/blog/new">צור בלוג</a>
+          <a href="/dashboard">חזרה</a>
+        </div>
+      </div>
+      `,
+            toast
+        )
+    );
+});
+
 
 app.get("/admin/reset-users", (req, res) => {
     res.send("OK");
