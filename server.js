@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const session = require("express-session");
 const bcrypt = require("bcrypt");
 const { Pool } = require("pg");
@@ -43,6 +43,15 @@ function consumeToast(req) {
     req.session.toast = null;
     return t;
 }
+function setFormDraft(req, draft) {
+    req.session.formDraft = draft;
+}
+function consumeFormDraft(req) {
+    const d = req.session.formDraft || null;
+    req.session.formDraft = null;
+    return d;
+}
+
 
 function toastHtml(toast) {
     if (!toast) return "";
@@ -51,21 +60,29 @@ function toastHtml(toast) {
     const msg = escapeHtml(String(toast.message || ""));
 
     return `
-  <div id="toast" class="toast ${type}">
-    <div class="toast-title">${type === "success" ? "Success" : "Error"}</div>
-    <div class="toast-msg">${msg}</div>
+  <div id="toast" class="toast ${type}" dir="rtl">
+    <div class="toast-row">
+      <div class="toast-icon">${type === "success" ? "✅" : "⚠️"}</div>
+      <div class="toast-text">
+        <div class="toast-title">${type === "success" ? "הצלחה" : "שגיאה"}</div>
+        <div class="toast-msg">${msg}</div>
+      </div>
+      <button class="toast-close" aria-label="סגור" onclick="this.parentElement.parentElement.remove()">×</button>
+    </div>
+    <div class="toast-bar"></div>
   </div>
   <script>
     (function(){
       const t = document.getElementById("toast");
       if (!t) return;
-      setTimeout(() => { t.classList.add("show"); }, 20);
-      setTimeout(() => { t.classList.remove("show"); }, 3500);
-      setTimeout(() => { t.remove(); }, 4200);
+      setTimeout(() => t.classList.add("show"), 20);
+      setTimeout(() => t.classList.remove("show"), 4200);
+      setTimeout(() => t.remove(), 4700);
     })();
   </script>
   `;
 }
+
 
 function pageHtml(title, body, toast) {
     return `
@@ -82,34 +99,85 @@ function pageHtml(title, body, toast) {
       a { text-decoration: none; }
 
       .toast{
-        position: fixed;
-        top: 14px;
-        left: 50%;
-        transform: translate(-50%, -20px);
-        min-width: 280px;
-        max-width: 520px;
-        width: calc(100% - 28px);
-        background: #fff;
-        border-radius: 10px;
-        padding: 12px 14px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-        border: 1px solid rgba(0,0,0,0.08);
-        opacity: 0;
-        transition: opacity 220ms ease, transform 220ms ease;
-        z-index: 9999;
-      }
-      .toast.show{
-        opacity: 1;
-        transform: translate(-50%, 0);
-      }
-      .toast.error{ border-left: 6px solid #e53935; }
-      .toast.success{ border-left: 6px solid #43a047; }
-      .toast-title{ font-weight: 700; margin-bottom: 4px; }
-      .toast-msg{ color: #333; }
-      .hint{ color: #555; font-size: 14px; }
-      .row{ margin: 10px 0; }
-      .nav a{ margin-right: 10px; }
-      .card{ background:#fafafa; border:1px solid #eee; border-radius: 10px; padding: 14px; }
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translate(-50%, -18px);
+  min-width: 300px;
+  max-width: 560px;
+  width: calc(100% - 28px);
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 12px 12px;
+  box-shadow: 0 14px 40px rgba(0,0,0,0.18);
+  border: 1px solid rgba(0,0,0,0.08);
+  opacity: 0;
+  transition: opacity 220ms ease, transform 220ms ease;
+  z-index: 9999;
+  overflow: hidden;
+}
+.toast.show{
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.toast.error{ border-right: 6px solid #e53935; }
+.toast.success{ border-right: 6px solid #43a047; }
+
+.toast-row{
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+}
+.toast-icon{
+  width: 34px;
+  height: 34px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: rgba(0,0,0,0.04);
+  border-radius: 10px;
+  font-size: 18px;
+}
+.toast-text{ flex:1; }
+.toast-title{ font-weight: 800; margin-bottom: 4px; }
+.toast-msg{ color:#333; line-height: 1.35; }
+
+.toast-close{
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.6;
+}
+.toast-close:hover{ opacity: 1; }
+
+.toast-bar{
+  height: 3px;
+  margin-top: 10px;
+  background: rgba(0,0,0,0.06);
+  position: relative;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.toast-bar::after{
+  content:"";
+  position:absolute;
+  top:0;
+  right:0;
+  height:100%;
+  width:100%;
+  background: rgba(67,160,71,0.55);
+  animation: toastbar 4.2s linear forwards;
+}
+.toast.error .toast-bar::after{
+  background: rgba(229,57,53,0.55);
+}
+@keyframes toastbar{
+  from { width:100%; }
+  to { width:0%; }
+}
+
     </style>
   </head>
   <body>
@@ -157,7 +225,8 @@ initDb().catch((e) => console.error("DB init error:", e));
 // ---------- Auth helpers ----------
 function requireLogin(req, res, next) {
     if (req.session && req.session.user) return next();
-    setToast(req, "error", "You must login first.");
+    setToast(req, "error", "צריך להתחבר קודם.");
+
     res.redirect("/login");
 }
 
@@ -206,31 +275,37 @@ app.get("/", (req, res) => {
 
 app.get("/register", (req, res) => {
     const toast = consumeToast(req);
+    const draft = consumeFormDraft(req) || {};
+
+    const username = escapeHtml(draft.username || "");
+    const email = escapeHtml(draft.email || "");
+    const birthDate = escapeHtml(draft.birthDate || "");
 
     res.send(
         pageHtml(
-            "Register",
+            "הרשמה",
             `
-      <h1>Register</h1>
-      <div class="card">
+      <h1 dir="rtl">הרשמה</h1>
+      <div class="card" dir="rtl">
         <form method="POST" action="/register">
-          <div class="row"><input name="username" placeholder="Username" required minlength="3" /></div>
-          <div class="row"><input name="email" type="email" placeholder="Email" required /></div>
+          <div class="row"><input name="username" placeholder="שם משתמש" required minlength="3" value="${username}" /></div>
+          <div class="row"><input name="email" type="email" placeholder="אימייל" required value="${email}" /></div>
           <div class="row">
-            <label class="hint">Birth date</label><br/>
-            <input name="birthDate" type="date" required />
+            <label class="hint">תאריך לידה</label><br/>
+            <input name="birthDate" type="date" required value="${birthDate}" />
           </div>
-          <div class="row"><input name="password" type="password" placeholder="Password" required minlength="5" maxlength="12" /></div>
-          <div class="hint">Password rules: 5-12 chars, must include at least 1 special character.</div>
-          <div class="row"><button type="submit">Create account</button></div>
+          <div class="row"><input name="password" type="password" placeholder="סיסמה" required minlength="5" maxlength="12" /></div>
+          <div class="hint">כללים: 5 עד 12 תווים, חובה תו מיוחד אחד לפחות.</div>
+          <div class="row"><button type="submit">צור משתמש</button></div>
         </form>
-        <p><a href="/login">Already have an account?</a></p>
+        <p><a href="/login">כבר יש לך משתמש?</a></p>
       </div>
       `,
             toast
         )
     );
 });
+
 
 app.post("/register", async (req, res) => {
     try {
@@ -239,24 +314,28 @@ app.post("/register", async (req, res) => {
         const birthDate = (req.body.birthDate || "").trim();
         const password = req.body.password || "";
 
+        setFormDraft(req, { username, email, birthDate });
+
         if (username.length < 3) {
-            setToast(req, "error", "Username too short, minimum 3 characters.");
+            setToast(req, "error", "שם המשתמש קצר מדי, מינימום 3 תווים.");
             return res.redirect("/register");
         }
 
         if (!isValidEmail(email)) {
-            setToast(req, "error", "Email is not valid.");
+            setToast(req, "error", "האימייל לא תקין.");
             return res.redirect("/register");
         }
 
         if (!birthDate) {
-            setToast(req, "error", "Birth date is required.");
+            setToast(req, "error", "חובה לבחור תאריך לידה.");
             return res.redirect("/register");
         }
 
         const pw = isStrongPassword(password);
         if (!pw.ok) {
-            setToast(req, "error", pw.msg);
+            setToast(req, "error", pw.msg === "Password must be 5 to 12 characters."
+                ? "הסיסמה חייבת להיות בין 5 ל 12 תווים."
+                : "הסיסמה חייבת להכיל לפחות תו מיוחד אחד, לדוגמה ! @ # $");
             return res.redirect("/register");
         }
 
@@ -265,38 +344,42 @@ app.post("/register", async (req, res) => {
 
         await pool.query(
             `INSERT INTO users (username, username_lc, email, birth_date, password_hash)
-       VALUES ($1, $2, $3, $4, $5)`,
+             VALUES ($1, $2, $3, $4, $5)`,
             [username, usernameLc, email, birthDate, passwordHash]
         );
 
-        setToast(req, "success", "Account created, you can login now.");
+        req.session.formDraft = null;
+        setToast(req, "success", "המשתמש נוצר בהצלחה, אפשר להתחבר.");
         return res.redirect("/login");
     } catch (err) {
         if (err && err.code === "23505") {
-            setToast(req, "error", "Username or email already exists.");
+            setToast(req, "error", "שם משתמש או אימייל כבר קיימים.");
             return res.redirect("/register");
         }
         console.error(err);
-        setToast(req, "error", "Server error.");
-        res.redirect("/register");
+        setToast(req, "error", "שגיאת שרת.");
+        return res.redirect("/register");
     }
 });
 
+
 app.get("/login", (req, res) => {
     const toast = consumeToast(req);
+    const draft = consumeFormDraft(req) || {};
+    const username = escapeHtml(draft.username || "");
 
     res.send(
         pageHtml(
-            "Login",
+            "התחברות",
             `
-      <h1>Login</h1>
-      <div class="card">
+      <h1 dir="rtl">התחברות</h1>
+      <div class="card" dir="rtl">
         <form method="POST" action="/login">
-          <div class="row"><input name="username" placeholder="Username" required /></div>
-          <div class="row"><input name="password" type="password" placeholder="Password" required /></div>
-          <div class="row"><button type="submit">Login</button></div>
+          <div class="row"><input name="username" placeholder="שם משתמש" required value="${username}" /></div>
+          <div class="row"><input name="password" type="password" placeholder="סיסמה" required /></div>
+          <div class="row"><button type="submit">התחבר</button></div>
         </form>
-        <p><a href="/register">Create account</a></p>
+        <p><a href="/register">צור משתמש</a></p>
       </div>
       `,
             toast
@@ -304,10 +387,13 @@ app.get("/login", (req, res) => {
     );
 });
 
+
 app.post("/login", async (req, res) => {
     try {
         const username = (req.body.username || "").trim();
         const password = req.body.password || "";
+
+        setFormDraft(req, { username });
 
         const usernameLc = username.toLowerCase();
 
@@ -317,26 +403,28 @@ app.post("/login", async (req, res) => {
         );
 
         if (result.rowCount === 0) {
-            setToast(req, "error", "Wrong username or password.");
+            setToast(req, "error", "שם משתמש או סיסמה לא נכונים.");
             return res.redirect("/login");
         }
 
         const user = result.rows[0];
         const ok = await bcrypt.compare(password, user.password_hash);
         if (!ok) {
-            setToast(req, "error", "Wrong username or password.");
+            setToast(req, "error", "שם משתמש או סיסמה לא נכונים.");
             return res.redirect("/login");
         }
 
+        req.session.formDraft = null;
         req.session.user = { id: user.id, username: user.username };
-        setToast(req, "success", "Logged in successfully.");
-        res.redirect("/dashboard");
+        setToast(req, "success", "התחברת בהצלחה.");
+        return res.redirect("/dashboard");
     } catch (err) {
         console.error(err);
-        setToast(req, "error", "Server error.");
-        res.redirect("/login");
+        setToast(req, "error", "שגיאת שרת.");
+        return res.redirect("/login");
     }
 });
+
 
 app.get("/dashboard", requireLogin, (req, res) => {
     const toast = consumeToast(req);
